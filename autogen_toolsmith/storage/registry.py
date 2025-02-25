@@ -7,7 +7,7 @@ import os
 import importlib.util
 import inspect
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, Tuple
 
 from autogen_toolsmith.tools.base.tool_base import BaseTool
 
@@ -84,6 +84,28 @@ class ToolRegistry:
             self.tools[tool.metadata.name] = tool
             self.tool_index[tool.metadata.name] = tool.to_dict()
     
+    def verify_dependencies(self, tool: BaseTool) -> Tuple[bool, Optional[str]]:
+        """Verify that all dependencies of a tool are available in the registry.
+        
+        Args:
+            tool: The tool to verify dependencies for.
+            
+        Returns:
+            Tuple[bool, Optional[str]]: A tuple of (dependencies_satisfied, error_message).
+        """
+        if not tool.metadata.dependencies:
+            return True, None
+        
+        missing_dependencies = []
+        for dependency_name in tool.metadata.dependencies:
+            if dependency_name not in self.tools:
+                missing_dependencies.append(dependency_name)
+        
+        if missing_dependencies:
+            return False, f"Missing dependencies: {', '.join(missing_dependencies)}"
+        
+        return True, None
+    
     def register(self, tool: BaseTool) -> bool:
         """Register a tool with the registry.
         
@@ -94,6 +116,12 @@ class ToolRegistry:
             bool: True if registration was successful, False otherwise.
         """
         try:
+            # Verify dependencies first
+            deps_satisfied, error_msg = self.verify_dependencies(tool)
+            if not deps_satisfied:
+                print(f"Warning: {error_msg}")
+                # We still register the tool, but print a warning
+            
             self._register_tool(tool)
             
             # Determine the category directory

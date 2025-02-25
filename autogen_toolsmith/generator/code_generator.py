@@ -197,7 +197,49 @@ class ToolGenerator:
         
         dependencies_text = "## Existing Tools\n"
         for tool_metadata in tools:
-            dependencies_text += f"- **{tool_metadata['name']}**: {tool_metadata['description']}\n"
+            tool_name = tool_metadata['name']
+            tool = registry.get_tool(tool_name)
+            
+            dependencies_text += f"### {tool_metadata['name']}\n"
+            dependencies_text += f"- **Description**: {tool_metadata['description']}\n"
+            dependencies_text += f"- **Category**: {tool_metadata.get('category', 'utility_tools')}\n"
+            
+            # 获取工具的运行方法详情
+            if tool:
+                try:
+                    # 获取run方法的签名和文档
+                    import inspect
+                    
+                    run_method = getattr(tool, 'run', None)
+                    if run_method and callable(run_method):
+                        # 提取参数信息
+                        sig = inspect.signature(run_method)
+                        params = []
+                        for name, param in sig.parameters.items():
+                            if name == 'self':
+                                continue
+                            param_str = name
+                            if param.annotation != inspect.Parameter.empty:
+                                param_type = str(param.annotation)
+                                param_type = param_type.replace('typing.', '').replace('<class \'', '').replace('\'>', '')
+                                param_str += f": {param_type}"
+                            if param.default != inspect.Parameter.empty:
+                                default_val = repr(param.default)
+                                param_str += f" = {default_val}"
+                            params.append(param_str)
+                        
+                        # 添加方法签名
+                        dependencies_text += f"- **Usage**: `{tool_name}.run({', '.join(params)})`\n"
+                        
+                        # 添加文档说明
+                        if run_method.__doc__:
+                            doc = inspect.getdoc(run_method)
+                            dependencies_text += f"- **Documentation**:\n```\n{doc}\n```\n"
+                except Exception as e:
+                    # 如果分析工具方法出错，只记录基本信息
+                    dependencies_text += f"- **Usage**: See tool documentation for details.\n"
+            
+            dependencies_text += "\n"
         
         return dependencies_text
     
