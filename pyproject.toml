@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autogen-toolsmith"
+version = "0.1.0"
+description = "AutoGen Toolsmith: Automatically generate tools for AutoGen agents"
+readme = "README.md"
+authors = [
+    {name = "AutoGen Toolsmith Team"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "autogen-agentchat>=0.4.0",
+    "autogen-core>=0.4.0",
+    "autogen-ext>=0.4.0",
+    "openai>=1.0.0",
+    "pytest>=7.0.0",
+]
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+    "flake8",
+    "pytest",
+    "pytest-cov",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/autogen-toolsmith"
+"Bug Tracker" = "https://github.com/yourusername/autogen-toolsmith/issues"
+
+[project.scripts]
+autogen-toolsmith = "autogen_toolsmith.cli.commands:main" 
