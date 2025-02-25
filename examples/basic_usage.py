@@ -10,6 +10,10 @@ import os
 import sys
 import json
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载.env文件中的环境变量
+load_dotenv()
 
 # Add the parent directory to the Python path
 parent_dir = Path(__file__).parent.parent
@@ -39,9 +43,12 @@ def create_demo_tool():
     # Initialize the tool generator
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required.")
+        raise ValueError("OPENAI_API_KEY environment variable is required. Please set it in your .env file.")
     
-    generator = ToolGenerator(openai_api_key=api_key)
+    # 使用环境变量中的模型配置
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    
+    generator = ToolGenerator(openai_api_key=api_key, model=model)
     
     # Create the tool
     tool_path = generator.create_tool(spec)
@@ -70,11 +77,14 @@ def use_tool_with_autogen():
     # Initialize the OpenAI configuration for AutoGen
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required.")
+        raise ValueError("OPENAI_API_KEY environment variable is required. Please set it in your .env file.")
+    
+    # 使用环境变量中的模型配置
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
     # Create OpenAI client
     llm = OpenAIChatCompletionClient(
-        model="gpt-4o",
+        model=model,
         api_key=openai_api_key
     )
     

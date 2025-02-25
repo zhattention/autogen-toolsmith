@@ -43,6 +43,25 @@ result = weather_tool.run("New York")
 print(result)
 ```
 
+## Configuration
+
+AutoGen Toolsmith uses environment variables for configuration. You can set these directly or use a `.env` file:
+
+```bash
+# Create a .env file in your project directory
+cp examples/.env.example .env
+
+# Edit the .env file with your API keys
+nano .env  # or use any text editor
+```
+
+Required environment variables:
+- `OPENAI_API_KEY`: Your OpenAI API key for generating tools
+
+Optional environment variables:
+- `OPENAI_ORG_ID`: Your OpenAI organization ID
+- `OPENAI_MODEL`: The model to use (default: "gpt-4o")
+
 ## Features
 
 - **Natural Language Tool Creation**: Describe the tool you need, and let the generator create it
