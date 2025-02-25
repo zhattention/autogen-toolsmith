@@ -9,7 +9,9 @@ This example shows how to:
 import os
 import sys
 import json
+import asyncio
 from pathlib import Path
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 # 加载.env文件中的环境变量
@@ -59,115 +61,72 @@ def create_demo_tool():
     return tool_path
 
 
-def use_tool_with_autogen():
+async def use_tool_with_autogen():
     """Use the created tool in an AutoGen conversation."""
     
-    # Try to get our date tool from the registry
-    date_tool = None
-    for tool_name in ["date_time_tool", "date_tool", "date_time_processor", "date_processor"]:
-        tool = get_tool(tool_name)
-        if tool:
-            date_tool = tool
-            break
+    # 检查文本处理工具是否存在
+    text_processor = get_tool("text_processor")
+    if not text_processor:
+        raise ValueError("No text processor tool found in registry.")
     
-    # If not found, use our example text processor tool
-    if not date_tool:
-        date_tool = get_tool("text_processor")
-    
-    # Initialize the OpenAI configuration for AutoGen
+    # 获取API密钥和模型
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         raise ValueError("OPENAI_API_KEY environment variable is required. Please set it in your .env file.")
-    
-    # 使用环境变量中的模型配置
     model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    # Create OpenAI client
-    llm = OpenAIChatCompletionClient(
+    # 创建文本处理工具函数
+    def process_text(operation: str, text: str) -> str:
+        """
+        Process text using various operations.
+        
+        Args:
+            operation: The operation to perform (word_count, case_upper, case_lower, extract_words, summarize)
+            text: The text to process
+            
+        Returns:
+            The result of the text processing operation as a JSON string.
+        """
+        result = text_processor.run(operation=operation, text=text)
+        return json.dumps(result, indent=2, default=str)
+    
+    # 创建模型客户端
+    model_client = OpenAIChatCompletionClient(
         model=model,
         api_key=openai_api_key
     )
     
-    # Create the tool function to use in AutoGen
-    def use_tool(tool_name: str, **kwargs):
-        """
-        A general-purpose function to call any registered AutoGen Toolsmith tool.
-        
-        Args:
-            tool_name: The name of the tool to use.
-            **kwargs: Arguments to pass to the tool.
-            
-        Returns:
-            The result of the tool execution.
-        """
-        tool = get_tool(tool_name)
-        if not tool:
-            return {"error": f"Tool {tool_name} not found."}
-        
-        result = tool.run(**kwargs)
-        return json.dumps(result, indent=2, default=str)
-    
-    # Use the general tool function
-    def use_text_processor(**kwargs):
-        """Use the text processor tool."""
-        return use_tool("text_processor", **kwargs)
-    
-    # Or create a dedicated function for the date tool
-    if date_tool:
-        def use_date_tool(**kwargs):
-            """Use the date tool."""
-            return use_tool(date_tool.metadata.name, **kwargs)
-        
-        functions = [use_text_processor, use_date_tool]
-    else:
-        functions = [use_text_processor]
-    
-    # Create the agents
+    # 创建助手代理
     assistant = AssistantAgent(
         name="assistant",
-        llm=llm,
-        tools=[
-            {
-                "name": f.__name__,
-                "description": f.__doc__,
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": True,
-                },
-            }
-            for f in functions
-        ]
+        model_client=model_client,
+        tools=[process_text],
+        system_message="You are a helpful assistant that can use tools to process text."
     )
     
+    # 创建用户代理
     user_proxy = UserProxyAgent(
-        name="user_proxy",
-        human_input_mode="NEVER", 
-        code_execution_config={"work_dir": "coding"},
-        tools={f.__name__: f for f in functions}
+        name="user",
+        description="A user who needs help with text processing."
     )
     
-    # Start the conversation
+    # 创建消息对象
+    message = TextMessage(
+        content="""
+        Please demonstrate the text processing tool capabilities:
+        1. Count the words in this message
+        2. Convert this text to uppercase: "Hello, world!"
+        3. Extract unique words from: "To be or not to be, that is the question."
+        """,
+        source="user"
+    )
+    
+    # 启动对话
     cancellation_token = CancellationToken()
-    console = Console()
     
-    user_proxy.send_message(
-        TextMessage(
-            """
-            Please demonstrate the capabilities of the text processing tool. 
-            Specifically:
-            1. Count the words and characters in this message
-            2. Extract all unique words from the text: "To be or not to be, that is the question."
-            3. Generate a summary of the following text:
-               "Machine learning is a subfield of artificial intelligence that focuses on developing systems that can learn from data. 
-               It has applications in many areas including computer vision, natural language processing, and recommendation systems. 
-               Recent advances in deep learning have dramatically improved the performance of machine learning systems."
-            """
-        ),
-        assistant,
-        cancellation_token=cancellation_token,
-        ui=console
-    )
+    # 发送消息并设置UI
+    response_stream = assistant.on_messages_stream([message], cancellation_token)
+    await Console(response_stream, output_stats=True)
 
 
 if __name__ == "__main__":
@@ -175,4 +134,4 @@ if __name__ == "__main__":
     # create_demo_tool()
     
     # Use the tool with AutoGen
-    use_tool_with_autogen() 
+    asyncio.run(use_tool_with_autogen()) 
