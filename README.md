@@ -1,24 +1,28 @@
 # AutoGen Toolsmith
 
-A Python library for automatically generating, testing, and managing tools for AutoGen agents.
+A Python library for automatically generating, testing, and managing tools for AI agents.
 
-## Overview
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![AutoGen](https://img.shields.io/badge/AutoGen-0.4.0%2B-green)
 
-AutoGen Toolsmith simplifies the process of creating and managing tools that can be used by agents in the AutoGen framework. This library allows you to:
+## 🚀 Overview
 
-- Generate tool code based on natural language descriptions
-- Automatically test generated tools to ensure functionality
-- Maintain a registry of available tools
-- Allow new tools to leverage existing tools as dependencies
-- Provide easy-to-use interfaces for agents to discover and use tools
+AutoGen Toolsmith is a powerful framework that dramatically improves the efficiency of creating tools for AI agents. It serves as:
 
-## Installation
+1. **A Tool Creation Accelerator**: Generate fully functional tools from natural language descriptions in minutes
+2. **A Foundation for Agent Capabilities**: Build the essential building blocks that determine what agents can do
+3. **A Framework-Agnostic Solution**: Easily integrate with AutoGen, LangChain, CrewAI and other agent frameworks
+4. **An MCP Protocol Compatible System**: Support standardized communication in multi-agent systems
+5. **A Curated Tool Repository**: Access pre-built tools for common tasks like web search, web scraping, and document processing
+
+## 🔧 Installation
 
 ```bash
 pip install autogen-toolsmith
 ```
 
-## Quick Start
+## 🏁 Quick Start
 
 ```python
 from autogen_toolsmith import ToolGenerator
@@ -43,33 +47,48 @@ result = weather_tool.run("New York")
 print(result)
 ```
 
-## Configuration
+## ✨ Key Features
 
-AutoGen Toolsmith uses environment variables for configuration. You can set these directly or use a `.env` file:
+### 🛠️ Efficient Tool Creation
 
-```bash
-# Create a .env file in your project directory
-cp examples/.env.example .env
+- Generate tools from natural language descriptions
+- Automatic test generation and validation
+- Built-in security checks
+- Comprehensive documentation generation
 
-# Edit the .env file with your API keys
-nano .env  # or use any text editor
-```
+### 🔄 Tool Dependency Management
 
-Required environment variables:
-- `OPENAI_API_KEY`: Your OpenAI API key for generating tools
+- Create tools that leverage existing tools
+- Automatic dependency tracking and validation
+- Build complex tool chains with simple descriptions
 
-Optional environment variables:
-- `OPENAI_ORG_ID`: Your OpenAI organization ID
-- `OPENAI_MODEL`: The model to use (default: "gpt-4o")
+### 🔌 Framework Integration
 
-## Features
+- Native support for AutoGen agents
+- Easy adapters for other frameworks
+- Consistent interfaces across all tools
 
-- **Natural Language Tool Creation**: Describe the tool you need, and let the generator create it
-- **Automatic Testing**: Generated tools are automatically tested before being added to the registry
-- **Tool Registry**: Easily discover and use available tools
-- **Tool Dependencies**: New tools can build upon existing tools
-- **Version Control**: Track changes to tools over time
+### 📚 Pre-built Tool Library
 
-## License
+- Web interaction tools (search, scraping)
+- Document processing tools
+- Data analysis utilities
+- API integrations
+- And many more!
+
+## 📖 Documentation
+
+For complete documentation, visit our [documentation site](https://github.com/yourusername/autogen-toolsmith/docs).
+
+- [Getting Started Guide](docs/getting_started.md)
+- [Tool Creation Tutorial](docs/tool_creation.md)
+- [API Reference](docs/api_reference.md)
+- [Project Vision](docs/project_vision.md)
+
+## 🤝 Contributing
+
+We welcome contributions! See our [Contributing Guide](docs/contributing.md) for more information.
+
+## 📄 License
 
 MIT 
