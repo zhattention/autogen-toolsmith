@@ -248,11 +248,13 @@ class ToolGenerator:
         
         return dependencies_text
     
-    def create_tool(self, specification: str) -> Optional[str]:
+    def create_tool(self, specification: str, output_dir: Optional[Path] = None, register: bool = True) -> Optional[str]:
         """Create a new tool from a specification.
         
         Args:
             specification: The tool specification.
+            output_dir: Optional custom directory to save the tool. If None, saves to the default package directory.
+            register: Whether to register the tool in the global registry.
             
         Returns:
             Optional[str]: The path to the created tool file, or None if creation failed.
@@ -321,17 +323,22 @@ class ToolGenerator:
             print("Tool tests failed. Not registering the tool.")
             return None
         
-        # Get the package directory
-        package_dir = Path(__file__).parent.parent
-        category_dir = package_dir / "tools" / "catalog" / category
+        # Determine the directory structure based on output_dir
+        if output_dir is None:
+            # Default: save to the package directory
+            package_dir = Path(__file__).parent.parent
+            tool_module_path = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
+        else:
+            # Custom: save to the specified output directory
+            package_dir = output_dir
+            tool_module_path = f"tools.{category}.{tool_name}"
         
-        # Ensure the category directory exists
+        # Create the directory structure for the tool
+        category_dir = package_dir / "tools" / "catalog" / category if output_dir is None else package_dir / "tools" / category
         category_dir.mkdir(exist_ok=True, parents=True)
         
-        # Create an empty __init__.py file if it doesn't exist
-        init_file = category_dir / "__init__.py"
-        if not init_file.exists():
-            init_file.touch()
+        # Create necessary __init__.py files to ensure proper imports
+        self._create_init_files(category_dir)
         
         # Save the tool code
         tool_file = category_dir / f"{tool_name}.py"
@@ -340,23 +347,24 @@ class ToolGenerator:
         
         print(f"Tool code saved to {tool_file}")
         
-        # Create a test file in the tests directory
-        tests_dir = package_dir.parent / "tests" / "tools" / category
-        tests_dir.mkdir(exist_ok=True, parents=True)
+        # Create a test file
+        if output_dir is None:
+            # Default: save tests to the tests directory in the package
+            tests_dir = package_dir.parent / "tests" / "tools" / category
+        else:
+            # Custom: save tests to the tests directory in the output directory
+            tests_dir = package_dir / "tests" / "tools" / category
         
-        # Create an empty __init__.py file in the tests directory if it doesn't exist
-        test_init_file = tests_dir / "__init__.py"
-        if not test_init_file.exists():
-            test_init_file.touch()
+        tests_dir.mkdir(exist_ok=True, parents=True)
+        self._create_init_files(tests_dir)
         
         # Save the test code
         test_file = tests_dir / f"test_{tool_name}.py"
         with open(test_file, 'w') as f:
             # Adjust the import in the test code
-            module_path = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
             adjusted_test_code = test_code.replace(
                 "from your_tool_module import", 
-                f"from {module_path} import"
+                f"from {tool_module_path} import"
             )
             f.write(adjusted_test_code)
         
@@ -367,7 +375,11 @@ class ToolGenerator:
         doc_raw = self._generate_code(doc_prompt)
         
         # Save the documentation
-        docs_dir = package_dir.parent / "docs" / "tools"
+        if output_dir is None:
+            docs_dir = package_dir.parent / "docs" / "tools"
+        else:
+            docs_dir = package_dir / "docs" / "tools"
+        
         docs_dir.mkdir(exist_ok=True, parents=True)
         
         doc_file = docs_dir / f"{tool_name}.md"
@@ -376,45 +388,88 @@ class ToolGenerator:
         
         print(f"Documentation saved to {doc_file}")
         
-        # Try to load and register the tool
-        try:
-            # Dynamically import the tool module
-            sys.path.insert(0, str(package_dir.parent))
-            module_name = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
-            module = importlib.import_module(module_name)
-            
-            # Find the tool class in the module
-            tool_class = getattr(module, tool_class_name)
-            
-            # Create an instance of the tool
-            tool_instance = tool_class()
-            
-            # Register the tool
-            if registry.register(tool_instance):
-                print(f"Tool {tool_name} registered successfully.")
+        # Register the tool if requested
+        if register:
+            tool_instance = None
+            try:
+                # Dynamically import the tool module
+                if output_dir is None:
+                    # For default directory, add package parent to path
+                    sys.path.insert(0, str(package_dir.parent))
+                else:
+                    # For custom directory, add output_dir to path
+                    sys.path.insert(0, str(output_dir))
                 
-                # Save the tool version
-                version_id = version_manager.save_version(
-                    tool_instance, 
-                    tool_code, 
-                    "Initial version generated from specification."
-                )
-                print(f"Tool version saved: {version_id}")
+                # Import the module
+                module = importlib.import_module(tool_module_path)
                 
-                return str(tool_file)
-            else:
-                print(f"Failed to register tool {tool_name}.")
-                return None
-        except Exception as e:
-            print(f"Error registering tool: {str(e)}")
-            return None
+                # Find the tool class in the module
+                tool_class = getattr(module, tool_class_name)
+                
+                # Create an instance of the tool
+                tool_instance = tool_class()
+                
+                # Register the tool
+                if registry.register(tool_instance):
+                    print(f"Tool {tool_name} registered successfully.")
+                    
+                    # Save the tool version
+                    version_id = version_manager.save_version(
+                        tool_instance, 
+                        tool_code, 
+                        "Initial version generated from specification."
+                    )
+                    print(f"Tool version saved: {version_id}")
+                else:
+                    print(f"Failed to register tool {tool_name}.")
+            except Exception as e:
+                print(f"Error registering tool: {str(e)}")
+            finally:
+                # Remove the added path
+                if output_dir is None:
+                    sys.path.remove(str(package_dir.parent))
+                else:
+                    sys.path.remove(str(output_dir))
+                    
+                # Return the tool path even if registration failed
+                return str(tool_file) if tool_instance else None
+        else:
+            print(f"Tool was not registered as per request.")
+            return str(tool_file)
     
-    def update_tool(self, tool_name: str, update_specification: str) -> Optional[str]:
+    def _create_init_files(self, directory: Path) -> None:
+        """Create __init__.py files in all parent directories.
+        
+        Args:
+            directory: The directory to create __init__.py files for.
+        """
+        # Create an empty __init__.py file in the specified directory
+        init_file = directory / "__init__.py"
+        if not init_file.exists():
+            init_file.touch()
+        
+        # Also ensure parent directories have __init__.py files
+        current = directory
+        while True:
+            parent = current.parent
+            # Stop when reaching the root or the parent is not a subdirectory of the project
+            if parent == current or not (parent.name and parent.name != "tools"):
+                break
+                
+            parent_init = parent / "__init__.py"
+            if not parent_init.exists():
+                parent_init.touch()
+            
+            current = parent
+    
+    def update_tool(self, tool_name: str, update_specification: str, output_dir: Optional[Path] = None, register: bool = True) -> Optional[str]:
         """Update an existing tool.
         
         Args:
             tool_name: The name of the tool to update.
             update_specification: The update specification.
+            output_dir: Optional custom directory where the tool is saved. If None, uses the default package directory.
+            register: Whether to register the updated tool in the global registry.
             
         Returns:
             Optional[str]: The path to the updated tool file, or None if update failed.
@@ -467,7 +522,7 @@ Make sure to maintain the same class name and tool name, but update the version 
             print(f"Updated tool code has security issues: {reason}")
             return None
         
-        # Extract the tool category
+        # Extract the category from the existing tool
         category = tool.metadata.category or "utility_tools"
         if category not in ["data_tools", "api_tools", "utility_tools"]:
             category = "utility_tools"
@@ -485,17 +540,22 @@ Make sure to maintain the same class name and tool name, but update the version 
             print("Updated tool tests failed. Not updating the tool.")
             return None
         
-        # Get the package directory
-        package_dir = Path(__file__).parent.parent
-        category_dir = package_dir / "tools" / "catalog" / category
+        # Determine the directory structure based on output_dir
+        if output_dir is None:
+            # Default: update in the package directory
+            package_dir = Path(__file__).parent.parent
+            tool_module_path = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
+        else:
+            # Custom: update in the specified output directory
+            package_dir = output_dir
+            tool_module_path = f"tools.{category}.{tool_name}"
         
-        # Ensure the category directory exists
+        # Create the directory structure for the tool
+        category_dir = package_dir / "tools" / "catalog" / category if output_dir is None else package_dir / "tools" / category
         category_dir.mkdir(exist_ok=True, parents=True)
         
-        # Create an empty __init__.py file if it doesn't exist
-        init_file = category_dir / "__init__.py"
-        if not init_file.exists():
-            init_file.touch()
+        # Create necessary __init__.py files
+        self._create_init_files(category_dir)
         
         # Save the updated tool code
         tool_file = category_dir / f"{tool_name}.py"
@@ -504,23 +564,24 @@ Make sure to maintain the same class name and tool name, but update the version 
         
         print(f"Updated tool code saved to {tool_file}")
         
-        # Create a test file in the tests directory
-        tests_dir = package_dir.parent / "tests" / "tools" / category
-        tests_dir.mkdir(exist_ok=True, parents=True)
+        # Create a test file
+        if output_dir is None:
+            # Default: save tests to the tests directory in the package
+            tests_dir = package_dir.parent / "tests" / "tools" / category
+        else:
+            # Custom: save tests to the tests directory in the output directory
+            tests_dir = package_dir / "tests" / "tools" / category
         
-        # Create an empty __init__.py file in the tests directory if it doesn't exist
-        test_init_file = tests_dir / "__init__.py"
-        if not test_init_file.exists():
-            test_init_file.touch()
+        tests_dir.mkdir(exist_ok=True, parents=True)
+        self._create_init_files(tests_dir)
         
         # Save the test code
         test_file = tests_dir / f"test_{tool_name}.py"
         with open(test_file, 'w') as f:
             # Adjust the import in the test code
-            module_path = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
             adjusted_test_code = test_code.replace(
                 "from your_tool_module import", 
-                f"from {module_path} import"
+                f"from {tool_module_path} import"
             )
             f.write(adjusted_test_code)
         
@@ -531,7 +592,11 @@ Make sure to maintain the same class name and tool name, but update the version 
         doc_raw = self._generate_code(doc_prompt)
         
         # Save the documentation
-        docs_dir = package_dir.parent / "docs" / "tools"
+        if output_dir is None:
+            docs_dir = package_dir.parent / "docs" / "tools"
+        else:
+            docs_dir = package_dir / "docs" / "tools"
+        
         docs_dir.mkdir(exist_ok=True, parents=True)
         
         doc_file = docs_dir / f"{tool_name}.md"
@@ -540,44 +605,61 @@ Make sure to maintain the same class name and tool name, but update the version 
         
         print(f"Documentation saved to {doc_file}")
         
-        # Try to load and register the updated tool
-        try:
-            # Dynamically import the tool module
-            sys.path.insert(0, str(package_dir.parent))
-            module_name = f"autogen_toolsmith.tools.catalog.{category}.{tool_name}"
-            module = importlib.import_module(module_name)
-            importlib.reload(module)  # Reload to get the updated code
-            
-            # Extract the tool class name
-            class_match = re.search(r"class\s+(\w+)\(BaseTool\)", updated_code)
-            if not class_match:
-                print("Could not extract tool class name from updated code.")
-                return None
-            
-            tool_class_name = class_match.group(1)
-            
-            # Find the tool class in the module
-            tool_class = getattr(module, tool_class_name)
-            
-            # Create an instance of the tool
-            tool_instance = tool_class()
-            
-            # Register the tool
-            if registry.register(tool_instance):
-                print(f"Tool {tool_name} updated and registered successfully.")
+        # Register the updated tool if requested
+        if register:
+            tool_instance = None
+            try:
+                # Dynamically import the tool module
+                if output_dir is None:
+                    # For default directory, add package parent to path
+                    sys.path.insert(0, str(package_dir.parent))
+                else:
+                    # For custom directory, add output_dir to path
+                    sys.path.insert(0, str(output_dir))
                 
-                # Save the tool version
-                version_id = version_manager.save_version(
-                    tool_instance, 
-                    updated_code, 
-                    f"Updated based on specification: {update_specification[:50]}..."
-                )
-                print(f"Tool version saved: {version_id}")
+                # Import the module
+                module = importlib.import_module(tool_module_path)
+                if hasattr(module, '__cached__'):  # Clear module cache if it exists
+                    importlib.reload(module)
                 
-                return str(tool_file)
-            else:
-                print(f"Failed to register updated tool {tool_name}.")
-                return None
-        except Exception as e:
-            print(f"Error registering updated tool: {str(e)}")
-            return None 
+                # Extract the tool class name
+                class_match = re.search(r"class\s+(\w+)\(BaseTool\)", updated_code)
+                if not class_match:
+                    print("Could not extract tool class name from updated code.")
+                    return None
+                
+                tool_class_name = class_match.group(1)
+                
+                # Find the tool class in the module
+                tool_class = getattr(module, tool_class_name)
+                
+                # Create an instance of the tool
+                tool_instance = tool_class()
+                
+                # Register the tool
+                if registry.register(tool_instance):
+                    print(f"Tool {tool_name} updated and registered successfully.")
+                    
+                    # Save the tool version
+                    version_id = version_manager.save_version(
+                        tool_instance, 
+                        updated_code, 
+                        f"Updated based on specification: {update_specification[:50]}..."
+                    )
+                    print(f"Tool version saved: {version_id}")
+                else:
+                    print(f"Failed to register updated tool {tool_name}.")
+            except Exception as e:
+                print(f"Error registering updated tool: {str(e)}")
+            finally:
+                # Remove the added path
+                if output_dir is None:
+                    sys.path.remove(str(package_dir.parent))
+                else:
+                    sys.path.remove(str(output_dir))
+                
+                # Return the tool path even if registration failed
+                return str(tool_file) if tool_instance else None
+        else:
+            print(f"Updated tool was not registered as per request.")
+            return str(tool_file) 

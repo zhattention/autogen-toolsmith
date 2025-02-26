@@ -25,10 +25,17 @@ pip install autogen-toolsmith
 ## 🏁 Quick Start
 
 ```python
+from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_toolsmith import ToolGenerator
 
+# Initialize the model client
+model_client = OpenAIChatCompletionClient(
+    model="gpt-4",
+    api_key="your_openai_api_key"
+)
+
 # Initialize the tool generator
-generator = ToolGenerator()
+generator = ToolGenerator(model_client=model_client)
 
 # Generate a new tool from a description
 tool_spec = """
@@ -45,6 +52,15 @@ from autogen_toolsmith.tools import get_tool
 weather_tool = get_tool("weather_fetcher")
 result = weather_tool.run("New York")
 print(result)
+
+# Or save the tool to your own project directory
+from pathlib import Path
+my_project_dir = Path.cwd() / "my_project"
+custom_tool_path = generator.create_tool(
+    specification=tool_spec,
+    output_dir=my_project_dir,
+    register=False  # Optional: don't register in global registry
+)
 ```
 
 ## ✨ Key Features
@@ -55,6 +71,7 @@ print(result)
 - Automatic test generation and validation
 - Built-in security checks
 - Comprehensive documentation generation
+- Save tools to your own project directory
 
 ### 🔄 Tool Dependency Management
 
@@ -67,6 +84,7 @@ print(result)
 - Native support for AutoGen agents
 - Easy adapters for other frameworks
 - Consistent interfaces across all tools
+- Support for third-party models via OpenAI-compatible interface
 
 ### 📚 Pre-built Tool Library
 
@@ -84,6 +102,7 @@ For complete documentation, visit our [documentation site](https://github.com/yo
 - [Tool Creation Tutorial](docs/tool_creation.md)
 - [API Reference](docs/api_reference.md)
 - [Project Vision](docs/project_vision.md)
+- [Custom Output Directory](docs/custom_output.md)
 
 ## 🤝 Contributing
 
