@@ -15,7 +15,18 @@ from autogen_toolsmith.storage.versioning import version_manager
 
 def create_tool_command(args):
     """Create a new tool from a specification."""
-    generator = ToolGenerator(openai_api_key=args.api_key, model=args.model)
+    # 创建model_client
+    try:
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+        
+        model_client = OpenAIChatCompletionClient(
+            model=args.model,
+            api_key=args.api_key or os.getenv("OPENAI_API_KEY")
+        )
+        generator = ToolGenerator(model_client=model_client)
+    except ImportError:
+        # 降级回退，使用默认初始化
+        generator = ToolGenerator()
     
     # Get the tool specification
     spec = ""
@@ -42,7 +53,18 @@ def create_tool_command(args):
 
 def update_tool_command(args):
     """Update an existing tool."""
-    generator = ToolGenerator(openai_api_key=args.api_key, model=args.model)
+    # 创建model_client
+    try:
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+        
+        model_client = OpenAIChatCompletionClient(
+            model=args.model,
+            api_key=args.api_key or os.getenv("OPENAI_API_KEY")
+        )
+        generator = ToolGenerator(model_client=model_client)
+    except ImportError:
+        # 降级回退，使用默认初始化
+        generator = ToolGenerator()
     
     # Get the update specification
     spec = ""

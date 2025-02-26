@@ -10,6 +10,7 @@ This example shows how to:
 import os
 from autogen_toolsmith.tools import get_tool, list_tools
 from autogen_toolsmith.generator.code_generator import ToolGenerator
+from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 
 def main():
@@ -51,7 +52,15 @@ def main():
     
     # Create a new tool that depends on both the formatter and analyzer
     print("\nCreating a new tool that depends on existing tools...")
-    generator = ToolGenerator()
+    
+    # 创建模型客户端
+    model_client = OpenAIChatCompletionClient(
+        model="gpt-4o",
+        api_key=api_key
+    )
+    
+    # 使用model_client初始化ToolGenerator
+    generator = ToolGenerator(model_client=model_client)
     
     # Tool specification with dependencies
     tool_spec = """

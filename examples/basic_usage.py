@@ -31,7 +31,7 @@ from autogen_toolsmith import ToolGenerator, get_tool
 from autogen_toolsmith.tools import BaseTool
 
 
-def create_demo_tool():
+async def create_demo_tool():
     """Create a demo date manipulation tool."""
     spec = """
     Create a tool that can perform date and time operations such as:
@@ -42,22 +42,27 @@ def create_demo_tool():
     - Add or subtract time periods from a date
     """
     
-    # Initialize the tool generator
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    # 获取API密钥和模型
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
         raise ValueError("OPENAI_API_KEY environment variable is required. Please set it in your .env file.")
-    
-    # 使用环境变量中的模型配置
     model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    generator = ToolGenerator(openai_api_key=api_key, model=model)
+    # 创建模型客户端
+    model_client = OpenAIChatCompletionClient(
+        model=model,
+        api_key=openai_api_key
+    )
     
-    # Create the tool
+    # 使用新的model_client参数初始化ToolGenerator
+    generator = ToolGenerator(model_client=model_client)
+    
+    # 创建工具
     tool_path = generator.create_tool(spec)
     print(f"Tool created at: {tool_path}")
     
-    # The tool should now be available in the registry
-    # Conventionally it will be named 'date_time_tool' or similar
+    # 工具应该已经在注册表中可用
+    # 按照惯例，它将被命名为'date_time_tool'或类似名称
     return tool_path
 
 
@@ -129,9 +134,15 @@ async def use_tool_with_autogen():
     await Console(response_stream, output_stats=True)
 
 
-if __name__ == "__main__":
-    # Uncomment to create a new tool
-    # create_demo_tool()
+async def main():
+    """主函数，用于运行示例"""
+    # 如果需要创建工具，取消下面的注释
+    # await create_demo_tool()
     
-    # Use the tool with AutoGen
-    asyncio.run(use_tool_with_autogen()) 
+    # 使用AutoGen中的工具
+    await use_tool_with_autogen()
+
+
+if __name__ == "__main__":
+    # 使用asyncio运行主函数
+    asyncio.run(main()) 

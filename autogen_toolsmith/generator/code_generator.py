@@ -116,38 +116,43 @@ class CodeValidator:
 class ToolGenerator:
     """Generator for creating tools in the AutoGen Toolsmith system."""
     
-    def __init__(self, openai_api_key: Optional[str] = None, model: str = "gpt-4o"):
+    def __init__(self, model_client=None):
         """Initialize the tool generator.
         
         Args:
-            openai_api_key: OpenAI API key. If not provided, it will be read from the OPENAI_API_KEY environment variable.
-            model: The model to use for code generation.
+            model_client: An instance of a model client (e.g., OpenAIChatCompletionClient).
+                If not provided, a default OpenAI client will be created using environment variables.
         """
-        self.api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenAI API key is required. Set it directly or via the OPENAI_API_KEY environment variable.")
-        
-        self.model = model
         self.validator = CodeValidator()
         
-        # Import here to avoid circular imports
-        try:
-            import openai
-            self.client = openai.OpenAI(api_key=self.api_key)
-        except ImportError:
-            raise ImportError("OpenAI package is required. Install it with 'pip install openai'.")
+        # Use provided model client if available, or create a default one
+        if model_client is None:
+            try:
+                from autogen_ext.models.openai import OpenAIChatCompletionClient
+                
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OpenAI API key is required when no model_client is provided. Set it via the OPENAI_API_KEY environment variable.")
+                
+                model_client = OpenAIChatCompletionClient(
+                    model="gpt-4o",
+                    api_key=api_key
+                )
+            except ImportError:
+                raise ImportError("AutoGen extensions package is required. Install it with 'pip install autogen-ext'.")
+        
+        self.model_client = model_client
     
     def _generate_code(self, prompt: str) -> str:
-        """Generate code using the OpenAI API.
+        """Generate code using the model client.
         
         Args:
-            prompt: The prompt to send to the API.
+            prompt: The prompt to send to the model.
             
         Returns:
             str: The generated code.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
+        response = self.model_client.create(
             messages=[
                 {
                     "role": "system",
