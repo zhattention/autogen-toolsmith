@@ -4,6 +4,7 @@ Basic usage example for AutoGen Toolsmith.
 This example shows how to:
 1. Create a new tool from a specification
 2. Use the tool in an AutoGen conversation
+3. Use all available tools with AutoGen
 """
 
 import os
@@ -28,7 +29,7 @@ from autogen_agentchat.ui import Console
 from autogen_core import CancellationToken
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_toolsmith import ToolGenerator, get_tool
-from autogen_toolsmith.tools import BaseTool
+from autogen_toolsmith.tools import BaseTool, get_all_tools_as_functions
 
 
 async def create_demo_tool():
@@ -134,13 +135,86 @@ async def use_tool_with_autogen():
     await Console(response_stream, output_stats=True)
 
 
+async def use_all_tools_with_autogen():
+    """Use all available tools in an AutoGen conversation."""
+    
+    # 获取API密钥和模型
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is required. Please set it in your .env file.")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    
+    # 创建模型客户端
+    model_client = OpenAIChatCompletionClient(
+        model=model,
+        api_key=openai_api_key
+    )
+    
+    # 获取所有可用工具作为函数
+    all_tools = get_all_tools_as_functions()
+    
+    if not all_tools:
+        print("Warning: No tools found. Create some tools first.")
+        return
+    
+    # 打印找到的工具
+    print(f"Found {len(all_tools)} tools:")
+    for tool in all_tools:
+        print(f"- {tool.__name__}")
+    
+    # 创建助手代理，使用所有可用工具
+    assistant = AssistantAgent(
+        name="assistant",
+        model_client=model_client,
+        tools=all_tools,
+        system_message="""You are a helpful assistant that can use a variety of tools to help with tasks.
+You have the following tools at your disposal:
+""" + "\n".join([f"- {tool.__name__}: {tool.__doc__}" for tool in all_tools])
+    )
+    
+    # 创建用户代理
+    user_proxy = UserProxyAgent(
+        name="user",
+        description="A user who needs help with various tasks."
+    )
+    
+    # 创建消息对象
+    message = TextMessage(
+        content="""
+        Hello! Please tell me what tools you have available to help me.
+        Then, if available, please use an appropriate tool to help me with the current date and time.
+        """,
+        source="user"
+    )
+    
+    # 启动对话
+    cancellation_token = CancellationToken()
+    
+    # 发送消息并设置UI
+    response_stream = assistant.on_messages_stream([message], cancellation_token)
+    await Console(response_stream, output_stats=True)
+
+
 async def main():
     """主函数，用于运行示例"""
     # 如果需要创建工具，取消下面的注释
     # await create_demo_tool()
     
-    # 使用AutoGen中的工具
-    await use_tool_with_autogen()
+    # 提供选项让用户选择要运行的示例
+    print("Please select an example to run:")
+    print("1. Use a specific text processing tool")
+    print("2. Use all available tools")
+    
+    choice = input("Enter your choice (1-2): ").strip()
+    
+    if choice == "1":
+        # 使用特定工具
+        await use_tool_with_autogen()
+    elif choice == "2":
+        # 使用所有可用工具
+        await use_all_tools_with_autogen()
+    else:
+        print("Invalid choice. Exiting.")
 
 
 if __name__ == "__main__":
