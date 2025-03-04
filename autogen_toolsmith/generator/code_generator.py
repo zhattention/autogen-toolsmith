@@ -9,140 +9,19 @@ import os
 import re
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pytest
 
-from autogen_toolsmith.generator.prompt_templates import TOOL_TEMPLATE, TEST_TEMPLATE, DOCUMENTATION_TEMPLATE 
+from autogen_toolsmith.generator.code_validator import CodeValidator
+from autogen_toolsmith.generator.prompt_templates import TOOL_TEMPLATE, TEST_TEMPLATE, DOCUMENTATION_TEMPLATE, UPDATE_TEMPLATE, UPDATE_WITH_TEST_RESULTS_TEMPLATE
 from autogen_toolsmith.storage.registry import registry, init_registry
 from autogen_toolsmith.storage.versioning import version_manager
 from autogen_toolsmith.tools.base.tool_base import BaseTool
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-
-class CodeValidator:
-    """Validator for generated code."""
-    
-    @staticmethod
-    def validate_syntax(code: str) -> bool:
-        """Check if the code has valid Python syntax.
-        
-        Args:
-            code: The code to validate.
-            
-        Returns:
-            bool: True if the code has valid syntax, False otherwise.
-        """
-        try:
-            compile(code, "<string>", "exec")
-            return True
-        except SyntaxError:
-            return False
-    
-    @staticmethod
-    def validate_security(code: str) -> Tuple[bool, str]:
-        """Check if the code has potential security issues.
-        
-        Args:
-            code: The code to validate.
-            
-        Returns:
-            Tuple[bool, str]: A tuple of (is_safe, reason).
-        """
-        # This is a very basic check and should be expanded for production use
-        dangerous_patterns = [
-            (r"os\.system\(", "Direct system command execution"),
-            (r"subprocess\.", "Subprocess execution"),
-            (r"eval\(", "Code evaluation"),
-            (r"exec\(", "Code execution"),
-            (r"__import__\(", "Dynamic imports"),
-            (r"open\(.+,\s*['\"]w['\"]", "File writing")
-        ]
-        
-        for pattern, reason in dangerous_patterns:
-            if re.search(pattern, code):
-                return False, f"Security issue: {reason}"
-        
-        return True, ""
-    
-    @staticmethod
-    def run_tests(tool_file: Union[str, Path], test_file: Union[str, Path]) -> Tuple[bool, str]:
-        """Run tests for the generated tool.
-        
-        Args:
-            tool_file: Path to the tool file.
-            test_file: Path to the test file.
-            
-        Returns:
-            Tuple[bool, str]: A tuple of (passed, test_output).
-        """
-        tool_file_path = Path(tool_file)
-        test_file_path = Path(test_file)
-        
-        if not tool_file_path.exists():
-            return False, f"Tool file not found: {tool_file_path}"
-        
-        if not test_file_path.exists():
-            return False, f"Test file not found: {test_file_path}"
-        
-        # Add the tool file's directory to the Python path
-        tool_dir = tool_file_path.parent
-        sys.path.insert(0, str(tool_dir))
-        
-        try:
-            # Run the tests
-            result = pytest.main(["-xvs", str(test_file_path)])
-            
-            # Pytest exit codes: 0 = success, 1 = tests failed, 2 = errors, others = other errors
-            success = result == 0
-            return success, f"Tests {'passed' if success else 'failed'} with exit code {result}"
-        except Exception as e:
-            return False, f"Test execution error: {str(e)}"
-        finally:
-            # Remove the directory from the Python path
-            if str(tool_dir) in sys.path:
-                sys.path.remove(str(tool_dir))
-
-    def validate_tool(self, code: str) -> bool:
-        """Validate the tool code.
-        
-        Args:
-            code: The code to validate.
-            
-        Returns:
-            bool: True if the code is valid, False otherwise.
-        """
-        # Check syntax
-        if not self.validate_syntax(code):
-            return False
-        
-        # Check security
-        is_safe, _ = self.validate_security(code)
-        if not is_safe:
-            return False
-        
-        return True
-        
-    def validate_test(self, code: str) -> bool:
-        """Validate the test code.
-        
-        Args:
-            code: The code to validate.
-            
-        Returns:
-            bool: True if the code is valid, False otherwise.
-        """
-        # Check syntax
-        if not self.validate_syntax(code):
-            return False
-        
-        # Check security
-        is_safe, _ = self.validate_security(code)
-        if not is_safe:
-            return False
-        
-        return True
-
+from autogen_toolsmith.tools import get_tool
 
 class ToolGenerator:
     """Generator for creating and updating tools in the AutoGen Toolsmith system."""
@@ -354,77 +233,108 @@ class ToolGenerator:
         Args:
             specification: The tool specification.
             output_dir: Optional directory to store the tool.
-                       If None, uses the first directory in storage_dirs.
+                       If None, uses "./tools" directory.
             register: Whether to register the tool in the registry.
             
         Returns:
-            Optional[str]: The path to the generated tool file if successful, None otherwise.
+            Optional[str]: The tool name if successful, None otherwise.
         """
-        try:
-            # Get available dependencies and existing tools information
-            available_dependencies = self._get_available_dependencies()
-            existing_tools_info = self._get_existing_tools_info()
+        # Set default output directory if none is provided
+        if output_dir is None:
+            output_dir = "./tools"
+            os.makedirs(output_dir, exist_ok=True)
             
-            # Generate tool code with information about existing tools
-            tool_prompt = TOOL_TEMPLATE.format(
-                specification=specification,
-                existing_tools_info=existing_tools_info
-            )
-            tool_code_raw = await self._generate_code(tool_prompt)
-            
-            # Extract and validate the tool code
-            tool_code = self._extract_code_block(tool_code_raw)
-            if not tool_code:
-                print("Error: Could not extract valid Python code from the generated tool code.")
-                return None
-            
-            # Get tool metadata
-            tool_metadata = self._extract_tool_metadata(tool_code)
-            if not tool_metadata:
-                print("Error: Could not extract tool metadata from the generated code.")
-                return None
-            
-            # Generate test code
-            test_prompt = TEST_TEMPLATE.format(
-                tool_name=tool_metadata["name"],
-                tool_code=tool_code
-            )
-            test_code_raw = await self._generate_code(test_prompt)
-            test_code = self._extract_code_block(test_code_raw)
-            
-            # Generate documentation
-            doc_prompt = DOCUMENTATION_TEMPLATE.format(
-                tool_name=tool_metadata["name"],
-                tool_code=tool_code
-            )
-            doc_raw = await self._generate_code(doc_prompt)
-            doc = self._extract_code_block(doc_raw)
-            
-            # Validate the generated code
-            if not self.validate_tool(tool_code):
-                print("Error: Generated tool code failed validation.")
-                return None
-            
-            if not self.validate_test(test_code):
-                print("Error: Generated test code failed validation.")
-                return None
-            
-            # Create tool instance and register if requested
-            tool_instance = self._create_tool_instance(tool_code)
-            if not tool_instance:
-                print("Error: Could not create tool instance from generated code.")
-                return None
-            
-            if register:
-                if not registry.register(tool_instance, output_dir):
-                    print("Error: Failed to register tool.")
-                    return None
-            
-            return str(registry.storage_dirs[0] / tool_metadata["category"] / f"{tool_metadata['name']}.py")
-            
-        except Exception as e:
-            print(f"Error creating tool: {e}")
+        # Get available dependencies and existing tools information
+        available_dependencies = self._get_available_dependencies()
+        existing_tools_info = self._get_existing_tools_info()
+        
+        # Generate tool code with information about existing tools
+        tool_prompt = TOOL_TEMPLATE.format(
+            specification=specification,
+            existing_tools_info=existing_tools_info
+        )
+        tool_code_raw = await self._generate_code(tool_prompt)
+
+        # save the tool_code_raw to a debug file
+        with open("tool_code_raw.txt", "a") as f:
+            f.write(tool_code_raw)
+        
+        # Extract and validate the tool code
+        tool_code = self._extract_code_block(tool_code_raw)
+        if not tool_code:
+            print("Error: Could not extract valid Python code from the generated tool code.")
             return None
+        
+        # Get tool metadata
+        tool_metadata = self._extract_tool_metadata(tool_code)
+        if not tool_metadata:
+            print("Error: Could not extract tool metadata from the generated code.")
+            return None
+        
+        # Generate test code
+        test_prompt = TEST_TEMPLATE.format(
+            tool_name=tool_metadata["name"],
+            tool_code=tool_code,
+            test_results="",
+            current_test_code="",
+            tool_dir=output_dir or "./tools"
+        )
+        test_code_raw = await self._generate_code(test_prompt)
+        test_code = self._extract_code_block(test_code_raw)
+        
+        # Generate documentation
+        doc_prompt = DOCUMENTATION_TEMPLATE.format(
+            tool_name=tool_metadata["name"],
+            tool_code=tool_code
+        )
+        doc_raw = await self._generate_code(doc_prompt)
+        doc = self._extract_code_block(doc_raw)
+        
+        # Validate the generated code
+        if not self.validator.validate_tool(tool_code):
+            print("Error: Generated tool code failed validation.")
+            return None
+        
+        if not self.validator.validate_test(test_code):
+            print("Error: Generated test code failed validation.")
+            return None
+        
+        # Create tool instance and register if requested
+        tool_instance = self._create_tool_instance(tool_code)
+        if not tool_instance:
+            print("Error: Could not create tool instance from generated code.")
+            return None
+        
+        if register:
+            # 确保目录存在
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            
+            # 使用指定的output_dir注册工具
+            if not registry.register(tool_instance, output_dir):
+                print("Error: Failed to register tool.")
+                return None
+                
+            # 提示用户如何使用指定目录获取工具
+            if output_dir:
+                print(f"Tool registered in custom directory: {output_dir}")
+                print(f"To use this tool, call: get_tool('{tool_metadata['name']}', storage_dir='{output_dir}')")
+            
+        # Save test code to file if output_dir is provided
+        if output_dir:
+            # Use the same directory structure as the tool
+            test_dir = os.path.join(output_dir, tool_metadata["category"], "tests")
+            # Create the test directory if it doesn't exist
+            os.makedirs(test_dir, exist_ok=True)
+            # Save the test code
+            test_file_path = os.path.join(test_dir, f"test_{tool_metadata['name']}.py")
+            with open(test_file_path, "w") as f:
+                f.write(test_code)
+            print(f"Test code saved to {test_file_path}")
+        
+        # Return the tool name instead of file path for easier tool calling
+        return tool_metadata["name"]
+        
 
     async def update_tool(
         self, 
@@ -439,23 +349,28 @@ class ToolGenerator:
             tool_name: The name of the tool to update.
             update_specification: The update specification.
             output_dir: Optional directory to store the updated tool.
-                       If None, uses the first directory in storage_dirs.
+                       If None, uses "./tools" directory.
             register: Whether to register the updated tool.
             
         Returns:
-            Optional[str]: The path to the updated tool file if successful, None otherwise.
+            Optional[str]: The tool name if successful, None otherwise.
         """
         try:
+            # Set default output directory if none is provided
+            if output_dir is None:
+                output_dir = "./tools"
+                os.makedirs(output_dir, exist_ok=True)
+                
             # Get the existing tool
-            existing_tool = registry.get_tool(tool_name)
-            if not existing_tool:
+            tool = get_tool(tool_name, storage_dir=output_dir)
+            if not tool:
                 print(f"Error: Tool '{tool_name}' not found.")
                 return None
             
             # Generate updated code
             update_prompt = UPDATE_TEMPLATE.format(
                 tool_name=tool_name,
-                existing_code=existing_tool.get_source(),
+                existing_code=tool.get_source(),
                 update_specification=update_specification
             )
             updated_code_raw = await self._generate_code(update_prompt)
@@ -468,7 +383,8 @@ class ToolGenerator:
             # Generate updated test code
             test_prompt = TEST_TEMPLATE.format(
                 tool_name=tool_name,
-                tool_code=updated_code
+                tool_code=updated_code,
+                tool_dir=output_dir or "./tools"
             )
             test_code_raw = await self._generate_code(test_prompt)
             test_code = self._extract_code_block(test_code_raw)
@@ -482,7 +398,7 @@ class ToolGenerator:
             doc = self._extract_code_block(doc_raw)
             
             # Validate the updated code
-            if not self.validate_tool(updated_code):
+            if not self.validator.validate_tool(updated_code):
                 print("Error: Updated tool code failed validation.")
                 return None
             
@@ -497,76 +413,43 @@ class ToolGenerator:
                 return None
             
             if register:
-                # Remove the old tool first
-                registry.remove_tool(tool_name)
+                # 确保目录存在
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
                 
-                # Register the updated tool
+                # Remove the old tool first, passing the storage_dir parameter
+                registry.remove_tool(tool_name, storage_dir=output_dir)
+                
+                # Register the updated tool with specified output_dir
                 if not registry.register(updated_tool, output_dir):
                     print("Error: Failed to register updated tool.")
                     return None
+                    
+                # 提示用户如何使用指定目录获取更新后的工具
+                if output_dir:
+                    print(f"Tool updated in custom directory: {output_dir}")
+                    print(f"To use this tool, call: get_tool('{tool_name}', storage_dir='{output_dir}')")
             
-            return str(registry.storage_dirs[0] / updated_tool.metadata.category / f"{tool_name}.py")
+            # Save updated test code to file if output_dir is provided
+            if output_dir:
+                # Use the same directory structure as the tool
+                test_dir = os.path.join(output_dir, updated_tool.metadata.category, "tests")
+                # Create the test directory if it doesn't exist
+                os.makedirs(test_dir, exist_ok=True)
+                # Save the test code
+                test_file_path = os.path.join(test_dir, f"test_{tool_name}.py")
+                with open(test_file_path, "w") as f:
+                    f.write(test_code)
+                print(f"Updated test code saved to {test_file_path}")
+            
+            # Return the tool name instead of file path for easier tool calling
+            return tool_name
             
         except Exception as e:
             print(f"Error updating tool: {e}")
             return None
     
-    async def generate_tool(self, specification: str, dependencies: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
-        """
-        生成工具代码和文档
-        """
-        prompt = self._prepare_prompt(specification, dependencies)
-        
-        # 使用await调用model_client.create
-        response = await self._model_client.create(
-            messages=[
-                SystemMessage(
-                    content=self._prompt_templates["system_message"],
-                    source="system"
-                ),
-                UserMessage(
-                    content=prompt,
-                    source="user"
-                )
-            ]
-        )
-        
-        # 处理返回的内容
-        result = response.content if isinstance(response.content, str) else ""
-        
-        # 提取代码和文档
-        code, doc = self._extract_code_and_doc(result)
-        
-        return code, doc
     
-    async def generate_test(self, code: str, dependencies: Optional[Dict[str, Any]] = None) -> str:
-        """
-        为工具生成测试代码
-        """
-        prompt = self._prepare_test_prompt(code, dependencies)
-        
-        # 使用await调用model_client.create
-        response = await self._model_client.create(
-            messages=[
-                SystemMessage(
-                    content=self._prompt_templates["test_system_message"],
-                    source="system"
-                ),
-                UserMessage(
-                    content=prompt,
-                    source="user"
-                )
-            ]
-        )
-        
-        # 处理返回的内容
-        result = response.content if isinstance(response.content, str) else ""
-        
-        # 提取测试代码
-        test_code = self._extract_test_code(result)
-        
-        return test_code
-
     def _extract_tool_metadata(self, code: str) -> Optional[Dict[str, str]]:
         """Extract tool metadata from the generated code.
         
@@ -645,13 +528,61 @@ class ToolGenerator:
                     # Create an instance of the tool
                     tool_instance = tool_class()
                     
-                    # Add the source code as an attribute
+                    # 存储工具的原始元数据，用于后续文件路径构建
+                    tool_name = tool_instance.metadata.name
+                    tool_category = tool_instance.metadata.category
+                    
+                    # 修改get_source方法，使其从文件读取源码
+                    def get_source(self):
+                        """Get the source code of the tool from its file.
+                        
+                        Returns:
+                            str: The source code of the tool.
+                        """
+                        try:
+                            # 尝试使用注册表存储的位置找到工具文件
+                            from autogen_toolsmith.storage.registry import registry
+                            tool_info = registry.get_tool_info(self.metadata.name)
+                            if tool_info and "file_path" in tool_info:
+                                file_path = tool_info["file_path"]
+                                if os.path.exists(file_path):
+                                    with open(file_path, "r") as f:
+                                        return f.read()
+                            
+                            # 如果没有找到，尝试在常见位置查找
+                            possible_paths = [
+                                # 优先使用工具类别的标准路径
+                                os.path.join("./tools", self.metadata.category, f"{self.metadata.name}.py"),
+                                # 使用当前目录
+                                f"./{self.metadata.name}.py",
+                                # 使用临时保存的代码（备选方案）
+                                getattr(self, "_source_code", None)
+                            ]
+                            
+                            for path in possible_paths:
+                                if path and (isinstance(path, str) and os.path.exists(path)):
+                                    with open(path, "r") as f:
+                                        return f.read()
+                                elif path and not isinstance(path, str):
+                                    # 如果是_source_code属性
+                                    return path
+                            
+                            # 如果所有尝试都失败，回退到原始方法
+                            import inspect
+                            return inspect.getsource(self.__class__)
+                        except Exception as e:
+                            print(f"Warning: Failed to read source from file: {e}")
+                            # 回退到保存的源码（如果有）
+                            if hasattr(self, "_source_code"):
+                                return self._source_code
+                            # 最后尝试使用inspect
+                            import inspect
+                            return inspect.getsource(self.__class__)
+                    
+                    # 仍然保存源码作为备选方案
                     tool_instance._source_code = code
                     
-                    # Override the get_source method
-                    def get_source(self):
-                        return self._source_code
-                    
+                    # 绑定新的get_source方法
                     tool_instance.get_source = get_source.__get__(tool_instance)
                     
                     return tool_instance
@@ -665,50 +596,6 @@ class ToolGenerator:
             print(f"Error creating tool instance: {e}")
             return None
             
-    def validate_tool(self, code: str) -> bool:
-        """Validate the generated tool code.
-        
-        Args:
-            code: The generated tool code.
-            
-        Returns:
-            bool: True if the code is valid, False otherwise.
-        """
-        # Check syntax
-        if not self.validator.validate_syntax(code):
-            print("Tool code has syntax errors.")
-            return False
-        
-        # Check security
-        is_safe, reason = self.validator.validate_security(code)
-        if not is_safe:
-            print(f"Tool code has security issues: {reason}")
-            return False
-        
-        return True
-    
-    def validate_test(self, code: str) -> bool:
-        """Validate the generated test code.
-        
-        Args:
-            code: The generated test code.
-            
-        Returns:
-            bool: True if the code is valid, False otherwise.
-        """
-        # Check syntax
-        if not self.validator.validate_syntax(code):
-            print("Test code has syntax errors.")
-            return False
-        
-        # Check security
-        is_safe, reason = self.validator.validate_security(code)
-        if not is_safe:
-            print(f"Test code has security issues: {reason}")
-            return False
-        
-        return True
-
     def list_available_tools(self, category: Optional[str] = None, verbose: bool = False) -> List[Dict[str, Any]]:
         """列出所有可用的工具。
         
@@ -812,4 +699,274 @@ class ToolGenerator:
         # 获取工具的详细信息
         tool_dict = tool.to_dict()
         
-        return tool_dict 
+        return tool_dict
+
+    async def update_with_test_results(
+        self,
+        tool_name: str,
+        test_results: str,
+        output_dir: Optional[str] = None,
+        register: bool = True
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Update a tool or its tests based on test results.
+        
+        Args:
+            tool_name: The name of the tool to update.
+            test_results: The pytest output from running the tests.
+            output_dir: Optional directory to store the updated tool.
+                       If None, uses "./tools" directory.
+            register: Whether to register the updated tool.
+            
+        Returns:
+            Tuple[bool, str, Optional[str]]: 
+                - Success flag (True/False)
+                - Message (success message or error details)
+                - Tool name if successful, None otherwise
+        """
+        # Set default output directory if none is provided
+        if output_dir is None:
+            output_dir = "./tools"
+            os.makedirs(output_dir, exist_ok=True)
+            
+        # Get the existing tool and its code
+        try:
+            tool = get_tool(tool_name, storage_dir=output_dir)
+            if not tool:
+                return False, f"Error: Tool '{tool_name}' not found.", None
+            
+            # 改为直接从文件读取源码，而不是使用tool.get_source()
+            category = tool.metadata.category
+            tool_file_path = os.path.join(output_dir, category, f"{tool_name}.py")
+            try:
+                with open(tool_file_path, "r") as f:
+                    tool_code = f.read()
+            except FileNotFoundError:
+                return False, f"Error: Tool file not found at {tool_file_path}", None
+        except Exception as e:
+            return False, f"Error retrieving tool: {str(e)}", None
+        
+        # Get the current test code
+        try:
+            test_file_path = os.path.join(output_dir, tool.metadata.category, "tests", f"test_{tool_name}.py")
+            try:
+                with open(test_file_path, "r") as f:
+                    test_code = f.read()
+            except FileNotFoundError:
+                test_code = ""
+                print(f"Warning: No existing test file found at {test_file_path}")
+        except Exception as e:
+            return False, f"Error retrieving test code: {str(e)}", None
+        
+        # Process test results to extract the most relevant information
+        processed_test_results = self._process_test_results(test_results)
+        
+        # Generate updated code based on test results
+        try:
+            update_prompt = UPDATE_WITH_TEST_RESULTS_TEMPLATE.format(
+                tool_code=tool_code,
+                test_code=test_code,
+                test_results=processed_test_results
+            )
+            
+            # For debugging - save update prompt to a file
+            with open("update_prompt_debug.txt", "a") as f:
+                f.write(update_prompt)
+                
+            updated_code_raw = await self._generate_code(update_prompt)
+            updated_code = self._extract_code_block(updated_code_raw)
+            
+            if not updated_code:
+                return False, "Could not extract valid Python code from the generated update.", None
+        except Exception as e:
+            return False, f"Error generating updated code: {str(e)}", None
+        
+        # Determine if the updated code is for the tool or tests
+        is_test_code = "pytest" in updated_code and "test_" in updated_code
+        
+        if is_test_code:
+            # Validate and save updated test code
+            if not self.validator.validate_test(updated_code):
+                return False, "Updated test code failed validation.", None
+            
+            # Save updated test code
+            try:
+                os.makedirs(os.path.dirname(test_file_path), exist_ok=True)
+                with open(test_file_path, "w") as f:
+                    f.write(updated_code)
+                return True, f"Updated test code saved to {test_file_path}", tool_name
+            except Exception as e:
+                return False, f"Error saving test code: {str(e)}", None
+        else:
+            # Validate updated tool code
+            validation_result = self.validator.validate_tool(updated_code)
+            if not validation_result:
+                return False, "Updated tool code failed validation.", None
+            
+            # Create updated tool instance
+            try:
+                updated_tool = self._create_tool_instance(updated_code)
+                if not updated_tool:
+                    return False, "Could not create tool instance from updated code.", None
+            except Exception as e:
+                return False, f"Error creating tool instance: {str(e)}", None
+            
+            if register:
+                try:
+                    # Remove the old tool first
+                    registry.remove_tool(tool_name, storage_dir=output_dir)
+                    
+                    # Register the updated tool
+                    if not registry.register(updated_tool, output_dir):
+                        return False, "Failed to register updated tool.", None
+                    
+                    return True, f"Tool updated in directory: {output_dir}", tool_name
+                except Exception as e:
+                    return False, f"Error registering updated tool: {str(e)}", None
+            
+            return True, "Tool updated successfully (not registered).", tool_name
+            
+    def _process_test_results(self, test_results: str) -> str:
+        """Process test results to extract the most relevant information.
+        
+        Args:
+            test_results: The raw test results from pytest.
+            
+        Returns:
+            str: Processed test results with the most relevant information.
+        """
+        # If the test results are already short, return them as is
+        if len(test_results.split('\n')) < 100:
+            return test_results
+            
+        # Extract the most relevant parts of the test results
+        processed_results = []
+        
+        # Split the test results into lines
+        lines = test_results.split('\n')
+        
+        # Add the first few lines (summary)
+        summary_lines = min(10, len(lines))
+        processed_results.extend(lines[:summary_lines])
+        processed_results.append("...")
+        
+        # Look for error and failure information
+        error_sections = []
+        current_section = []
+        in_error_section = False
+        
+        for line in lines:
+            # Look for lines that indicate test failures or errors
+            if "FAILED" in line or "ERROR" in line or "AssertionError" in line or "E       " in line:
+                if not in_error_section:
+                    in_error_section = True
+                    current_section = [line]
+                else:
+                    current_section.append(line)
+            elif in_error_section:
+                # If we've collected at least 3 lines and hit a blank line, end the section
+                if len(current_section) >= 3 and not line.strip():
+                    error_sections.append(current_section)
+                    current_section = []
+                    in_error_section = False
+                else:
+                    current_section.append(line)
+        
+        # Add any remaining error section
+        if in_error_section and current_section:
+            error_sections.append(current_section)
+        
+        # Add all error sections to the processed results
+        for section in error_sections:
+            processed_results.append("-" * 60)
+            processed_results.extend(section)
+        
+        # Add the last few lines (summary)
+        if len(lines) > 20:
+            processed_results.append("...")
+            processed_results.extend(lines[-10:])
+        
+        return "\n".join(processed_results)
+
+    async def run_tests_and_update(
+        self,
+        tool_name: str,
+        output_dir: Optional[str] = None,
+        max_attempts: int = 3
+    ) -> Tuple[bool, str]:
+        """Run tests for a tool and update it based on results if needed.
+        
+        Args:
+            tool_name: The name of the tool to test and potentially update.
+            output_dir: Optional directory where the tool is stored.
+                       If None, uses "./tools" directory.
+            max_attempts: Maximum number of attempts to fix failing tests.
+            
+        Returns:
+            Tuple[bool, str]: (success, message) where success indicates if all tests pass
+                            and message contains test results or error information.
+        """
+        if output_dir is None:
+            output_dir = "./tools"
+        
+        # Get the tool
+        tool = get_tool(tool_name, storage_dir=output_dir)
+        if not tool:
+            return False, f"Tool '{tool_name}' not found."
+        
+        category = tool.metadata.category
+        tool_file = os.path.join(output_dir, category, f"{tool_name}.py")
+        test_file = os.path.join(output_dir, category, "tests", f"test_{tool_name}.py")
+        
+        # Check if test file exists
+        if not os.path.exists(test_file):
+            return False, f"Test file not found: {test_file}"
+        
+        attempt = 0
+        last_error = ""
+        last_test_output = ""
+        
+        while attempt < max_attempts:
+            # Run the tests
+            result = self.validator.run_tests(tool_file, test_file)
+            success = result[0]
+            test_output = result[1]
+            last_test_output = test_output  # Save the latest test output
+            
+            if success:
+                return True, "All tests passed successfully.\n\n" + test_output
+            
+            print(f"\nAttempt {attempt + 1}/{max_attempts}: Tests failed.")
+            print(f"--- Test Output Summary ---")
+            
+            # Print a summary of the test output (first few lines)
+            output_lines = test_output.split('\n')
+            summary_lines = min(20, len(output_lines))  # Show at most 20 lines in the summary
+            for i in range(summary_lines):
+                print(output_lines[i])
+            if len(output_lines) > summary_lines:
+                print(f"... (and {len(output_lines) - summary_lines} more lines)")
+            
+            print("\nUpdating code based on test results...")
+            
+            # Try to update the code based on test results
+            update_result = await self.update_with_test_results(
+                tool_name=tool_name,
+                test_results=test_output,
+                output_dir=output_dir
+            )
+            
+            success, message, updated_tool_name = update_result
+            
+            if not success:
+                last_error = message
+                print(f"Failed to update: {message}")
+                attempt += 1
+                continue
+            
+            print(f"Update successful: {message}")
+            attempt += 1
+        
+        if last_error:
+            return False, f"Failed to fix tests after {max_attempts} attempts. Last error: {last_error}\n\nLast test output:\n{last_test_output}"
+        else:
+            return False, f"Failed to fix tests after {max_attempts} attempts.\n\nLast test output:\n{last_test_output}" 

@@ -7,78 +7,110 @@
 而不是默认的autogen_toolsmith包目录。
 """
 
+import asyncio
 import os
 from pathlib import Path
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_toolsmith.generator import ToolGenerator
 from dotenv import load_dotenv
 
-def main():
+async def main():
     # 加载环境变量
     load_dotenv()
     
     # 获取API密钥和模型名称
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("请设置OPENAI_API_KEY环境变量")
     
-    model = os.environ.get("OPENAI_MODEL", "gpt-4")
-    
     # 创建模型客户端
     model_client = OpenAIChatCompletionClient(
-        model=model,
-        api_key=api_key
+        model="anthropic/claude-3.7-sonnet",
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        model_info={
+            "vision": False,
+            "function_calling": False,
+            "json_output": True,
+            "family": "anthropic",
+        },
+        llm_config={
+            "cache_seed": 42,
+            "cache_path_root": "./cache",
+        }
     )
     
-    # 创建工具生成器
-    generator = ToolGenerator(model_client=model_client)
+    # Define multiple storage directories
+    project_dir = Path.cwd() / "my_project"
+    shared_dir = Path.cwd() / "shared_tools"
     
-    # 定义自定义输出目录（在当前工作目录下创建my_project文件夹）
-    # 您可以根据需要更改为任何目录路径
-    custom_dir = Path.cwd() / "my_project"
-    custom_dir.mkdir(exist_ok=True)
+    # Create directories if they don't exist
+    project_dir.mkdir(exist_ok=True, parents=True)
+    shared_dir.mkdir(exist_ok=True, parents=True)
     
-    print(f"将工具保存到自定义目录: {custom_dir}")
+    # Initialize registry with multiple directories
+    storage_dirs = [str(project_dir), str(shared_dir)]
     
-    # 创建一个简单的文本处理工具，并将其保存到自定义目录
-    tool_specification = """
-    创建一个名为TextFormatter的工具，它可以:
-    1. 将文本转换为大写或小写
-    2. 计算文本中的单词数量
-    3. 删除文本中的多余空格
-    4. 提取文本中的电子邮件地址和URL
+    # Create a tool generator with custom storage directories
+    generator = ToolGenerator(model_client=model_client, storage_dirs=storage_dirs)
+    
+    # Create a tool in the project directory
+    tool_spec = """
+    Create a text processing tool that can:
+    1. Count words in a text
+    2. Find most common words
+    3. Calculate reading time
     """
     
-    # 使用output_dir参数将工具保存到自定义目录
-    # register=False选项表示不将工具注册到全局注册表
-    tool_path = generator.create_tool(
-        specification=tool_specification,
-        output_dir=custom_dir,
-        register=False  # 可选，根据需要设置
+    tool_path = await generator.create_tool(
+        specification=tool_spec,
+        output_dir=str(project_dir),  # Save to project directory
+        register=True
     )
     
     if tool_path:
-        print(f"工具成功创建并保存到: {tool_path}")
-        print("\n自定义目录的文件结构:")
-        
-        # 显示生成的目录结构
-        def print_directory_tree(directory, prefix=""):
-            """打印目录结构"""
-            print(f"{prefix}{os.path.basename(directory)}/")
-            prefix += "  "
-            for item in os.listdir(directory):
-                item_path = os.path.join(directory, item)
-                if os.path.isdir(item_path):
-                    print_directory_tree(item_path, prefix)
-                else:
-                    print(f"{prefix}{item}")
-        
-        print_directory_tree(custom_dir)
-        
-        print("\n您现在可以从自定义路径导入和使用此工具:")
-        print("from my_project.tools.utility_tools.text_formatter import TextFormatter")
-    else:
-        print("工具创建失败")
+        print(f"Tool created successfully at: {tool_path}")
+    
+    # Create another tool in the shared directory
+    shared_tool_spec = """
+    Create a file utility tool that can:
+    1. List files by extension
+    2. Find duplicate files
+    3. Calculate directory size
+    """
+    
+    shared_tool_path = await generator.create_tool(
+        specification=shared_tool_spec,
+        output_dir=str(shared_dir),  # Save to shared directory
+        register=True
+    )
+    
+    if shared_tool_path:
+        print(f"Shared tool created successfully at: {shared_tool_path}")
+    
+    # Update the tool in the project directory
+    update_spec = """
+    Add the following features to the text processing tool:
+    1. Calculate text sentiment
+    2. Extract keywords
+    """
+    
+    updated_path = await generator.update_tool(
+        tool_name="text_processor",  # Assuming this is the generated name
+        update_specification=update_spec,
+        output_dir=str(project_dir),  # Update in project directory
+        register=True
+    )
+    
+    if updated_path:
+        print(f"Tool updated successfully at: {updated_path}")
+
+async def test_code_validator():
+    from autogen_toolsmith.generator.code_validator import CodeValidator
+    validator = CodeValidator()
+    validator.run_tests("./my_project/tools/utility_tools/text_formatter_tool.py", 
+                        "./my_project/tests/tools/utility_tools/test_text_formatter_tool.py")
 
 if __name__ == "__main__":
-    main() 
+    asyncio.run(main()) 
+    # asyncio.run(test_code_validator())
